@@ -46,10 +46,55 @@ if False:
     socket.socket = socketwrap
 
 #
-# We store metadata about what available transport mechanisms we have available.
+# We store metadata about what available transport mechanisms we have available
 #
 _http_connectors = {}  # libname: classimpl mapping
 _http_facilities = {}  # functionalitylabel: [sequence of libname] mapping
+
+try:
+    from distutils.version import LooseVersion
+except ImportError:
+    import re
+
+    class LooseVersion():
+        "copied loose Version from distutils package to use as fallback"
+
+        component_re = re.compile(r'(\d+ | [a-z]+ | \.)', re.VERBOSE)
+
+        def __init__(self, vstring=None):
+            if vstring:
+                self.parse(vstring)
+
+        def parse(self, vstring):
+            # I've given up on thinking I can reconstruct the version string
+            # from the parsed tuple -- so I just store the string here for
+            # use by __str__
+            self.vstring = vstring
+            components = filter(lambda x: x and x != '.',
+                                self.component_re.split(vstring))
+            for i in range(len(components)):
+                try:
+                    components[i] = int(components[i])
+                except ValueError:
+                    pass
+
+            self.version = components
+
+        def __str__(self):
+            return self.vstring
+
+        def __repr__(self):
+            return "LooseVersion ('%s')" % str(self)
+
+        def __cmp__(self, other):
+            if isinstance(other, basestring):
+                other = LooseVersion(other)
+
+            return cmp(self.version, other.version)
+
+sys_version = LooseVersion("%d.%d.%d" % (
+    sys.version_info.major, sys.version_info.minor, sys.version_info.micro,
+))
 
 
 class TransportBase:
@@ -62,16 +107,24 @@ class TransportBase:
 #
 try:
     import httplib2
-    if sys.version > '3' and httplib2.__version__ <= "0.7.7":
+    httplib2_version = LooseVersion(httplib2.__version__)
+    if (
+        sys.version_info.major >= 3 and
+        httplib2_version <= LooseVersion("0.7.7")
+    ):
         import http.client
-        # httplib2 workaround: check_hostname needs a SSL context with either 
+        # httplib2 workaround: check_hostname needs a SSL context with either
         #                      CERT_OPTIONAL or CERT_REQUIRED
         # see https://code.google.com/p/httplib2/issues/detail?id=173
-        orig__init__ = http.client.HTTPSConnection.__init__ 
-        def fixer(self, host, port, key_file, cert_file, timeout, context,
-                        check_hostname, *args, **kwargs):
+        orig__init__ = http.client.HTTPSConnection.__init__
+
+        def fixer(
+            self, host, port, key_file, cert_file, timeout, context,
+            check_hostname, *args, **kwargs
+        ):
             chk = kwargs.get('disable_ssl_certificate_validation', True) ^ True
-            orig__init__(self, host, port=port, key_file=key_file,
+            orig__init__(
+                self, host, port=port, key_file=key_file,
                 cert_file=cert_file, timeout=timeout, context=context,
                 check_hostname=chk)
         http.client.HTTPSConnection.__init__ = fixer
@@ -84,17 +137,16 @@ else:
         _wrapper_name = 'httplib2'
 
         def __init__(self, timeout, proxy=None, cacert=None, sessions=False):
-#            httplib2.debuglevel=4 
+#            httplib2.debuglevel=4
             kwargs = {}
             if proxy:
                 import socks
                 kwargs['proxy_info'] = httplib2.ProxyInfo(proxy_type=socks.PROXY_TYPE_HTTP, **proxy)
                 log.info("using proxy %s" % proxy)
-
             # set optional parameters according to supported httplib2 version
-            if httplib2.__version__ >= '0.3.0':
+            if httplib2_version >= LooseVersion('0.3.0'):
                 kwargs['timeout'] = timeout
-            if httplib2.__version__ >= '0.7.0':
+            if httplib2_version >= LooseVersion('0.7.0'):
                 kwargs['disable_ssl_certificate_validation'] = cacert is None
                 kwargs['ca_certs'] = cacert
             httplib2.Http.__init__(self, **kwargs)
@@ -122,19 +174,26 @@ class urllib2Transport(TransportBase):
             raise RuntimeError('proxy is not supported with urllib2 transport')
         if cacert:
             raise RuntimeError('cacert is not support with urllib2 transport')
-        
+
         handlers = []
 
-        if ((sys.version_info[0] == 2 and sys.version_info >= (2,7,9)) or
-            (sys.version_info[0] == 3 and sys.version_info >= (3,2,0))):
+        if (
+            (
+                sys.version_info[0] == 2 and
+                sys_version >= LooseVersion("2.7.9")
+            ) or (
+                sys.version_info[0] == 3 and
+                sys_version >= LooseVersion("3.2.0")
+            )
+        ):
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             handlers.append(urllib2.HTTPSHandler(context=context))
-        
+
         if sessions:
             handlers.append(urllib2.HTTPCookieProcessor(CookieJar()))
-        
+
         opener = urllib2.build_opener(*handlers)
         self.request_opener = opener.open
         self._timeout = timeout
@@ -152,7 +211,7 @@ class urllib2Transport(TransportBase):
 _http_connectors['urllib2'] = urllib2Transport
 _http_facilities.setdefault('sessions', []).append('urllib2')
 
-if sys.version_info >= (2, 6):
+if sys_version >= LooseVersion("2.6.0"):
     _http_facilities.setdefault('timeout', []).append('urllib2')
 
 #
