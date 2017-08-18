@@ -32,6 +32,9 @@ Source Code originally available on [GoogleCode](https://code.google.com/p/pysim
 
 Changelog
 ---------
+Recent changes (2017):
+
+* Fixed awful string version check handling (package broken when installed httplib >= 0.10.0)
 
 Recent changes (2014/2015):
 
